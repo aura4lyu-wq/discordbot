@@ -30,8 +30,15 @@ async def on_message(message):
 
     # Gemini APIで返答を生成
     response = gemini_client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=message.content
+        model="gemini-2.5-flash-lite",
+        contents=message.content,
+        config={
+            "system_instruction": (
+                "あなたはDiscordボットです。"
+                f"ボット名は「{client.user.name}」です。"
+                "ユーザーからのメッセージに対して簡潔かつ丁寧に返答してください。"
+            )
+        }
     )
     reply = response.text
 
