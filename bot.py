@@ -30,7 +30,7 @@ async def on_message(message):
 
     # Gemini APIで返答を生成
     response = gemini_client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-1.5-flash",
         contents=message.content
     )
     reply = response.text
