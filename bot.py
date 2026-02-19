@@ -1,5 +1,5 @@
 import discord
-import google.generativeai as genai
+from google import genai
 
 # ボットトークン設定
 from dotenv import load_dotenv
@@ -13,8 +13,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = discord.Client(intents=discord.Intents.all())
 
 # Geminiクライアント作成
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ボットが起動したときに実行するイベントハンドラ
 @client.event
@@ -30,7 +29,10 @@ async def on_message(message):
         return
 
     # Gemini APIで返答を生成
-    response = model.generate_content(message.content)
+    response = gemini_client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=message.content
+    )
     reply = response.text
 
     await message.channel.send(reply)
