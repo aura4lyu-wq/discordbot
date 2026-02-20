@@ -81,7 +81,10 @@ async def play_tts(voice_client: discord.VoiceClient, text: str) -> None:
             error if error else None,
         )
 
-    voice_client.play(discord.FFmpegPCMAudio(tmp_path), after=after_play)
+    voice_client.play(
+        discord.FFmpegPCMAudio(tmp_path, executable="/usr/bin/ffmpeg"),
+        after=after_play,
+    )
     await done  # 再生完了まで待つ
 
 
