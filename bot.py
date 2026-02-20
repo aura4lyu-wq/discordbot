@@ -43,6 +43,7 @@ async def on_message(message):
         return
 
     response = gemini_client.models.generate_content(
+<<<<<<< HEAD
         model="gemini-2.5-flash",
         contents=message.content,
         config={
@@ -52,6 +53,10 @@ async def on_message(message):
                 "基本的にはクールな印象ですが、少しツンデレなところがあります。"
             )
         }
+=======
+        model="gemini-1.5-flash",
+        contents=message.content
+>>>>>>> 97910e0916b14ab8e4ce30921f5fe7b944e84513
     )
     reply = response.text
     await message.channel.send(reply)
@@ -104,4 +109,8 @@ async def leave(interaction: discord.Interaction):
     await interaction.response.send_message(f"**{channel_name}** から退出しました。")
 
 
+<<<<<<< HEAD
 bot.run(TOKEN)
+=======
+bot.run(TOKEN)
+>>>>>>> 97910e0916b14ab8e4ce30921f5fe7b944e84513
