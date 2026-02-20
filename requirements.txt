@@ -1,9 +1,12 @@
 # Discord bot
-discord.py[voice]==2.6.4
+py-cord[voice]
 PyNaCl==1.5.0
 
 # AI
 google-genai==1.64.0
+
+# STT
+faster-whisper
 
 # Utilities
 python-dotenv==1.2.1
