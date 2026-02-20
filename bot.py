@@ -5,6 +5,16 @@ from google import genai
 from dotenv import load_dotenv
 import os
 
+# PyNaCl が入っていない場合は起動時に即エラーを出す
+try:
+    import nacl  # noqa: F401
+except ImportError:
+    raise SystemExit(
+        "[ERROR] PyNaCl が見つかりません。音声機能に必要です。\n"
+        "  pip install PyNaCl\n"
+        "を実行してから再起動してください。"
+    )
+
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -55,12 +65,22 @@ async def join(interaction: discord.Interaction):
     channel = interaction.user.voice.channel
 
     # すでに別のVCにいる場合は移動、そうでなければ接続
-    if interaction.guild.voice_client is not None:
-        await interaction.guild.voice_client.move_to(channel)
-        await interaction.response.send_message(f"**{channel.name}** に移動しました。")
-    else:
-        await channel.connect()
-        await interaction.response.send_message(f"**{channel.name}** に参加しました。")
+    try:
+        if interaction.guild.voice_client is not None:
+            await interaction.guild.voice_client.move_to(channel)
+            await interaction.response.send_message(f"**{channel.name}** に移動しました。")
+        else:
+            await channel.connect()
+            await interaction.response.send_message(f"**{channel.name}** に参加しました。")
+    except RuntimeError as e:
+        if "PyNaCl" in str(e):
+            await interaction.response.send_message(
+                "音声機能に必要な PyNaCl ライブラリがインストールされていません。\n"
+                "ボットのサーバーで `pip install PyNaCl` を実行して再起動してください。",
+                ephemeral=True
+            )
+        else:
+            raise
 
 
 @bot.tree.command(name="leave", description="ボットをボイスチャンネルから退出させます")
