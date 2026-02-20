@@ -3,11 +3,12 @@ from discord.ext import commands
 from discord import app_commands
 from google import genai
 from dotenv import load_dotenv
-import audioop
 import aiohttp
 import asyncio
 import io
+import math
 import os
+import struct
 import tempfile
 import wave
 from collections import deque
@@ -130,6 +131,15 @@ _SILENCE_FRAMES = int(SILENCE_DURATION * 1000 / _FRAME_MS)
 _MIN_AUDIO_LEN  = int(_FRAME_RATE * _CHANNELS * _SAMPLE_WIDTH * 0.5)  # 0.5 秒以上
 
 
+def _pcm_rms(data: bytes) -> float:
+    """16-bit PCM の RMS を返す（audioop 不要・Python 3.13 対応）"""
+    count = len(data) // 2
+    if count == 0:
+        return 0.0
+    samples = struct.unpack(f"<{count}h", data)
+    return math.sqrt(sum(s * s for s in samples) / count)
+
+
 class VoiceListener(discord.sinks.Sink):
     """VC の発話を受信し、無音検出で区切って Gemini へ送るシンク"""
 
@@ -147,7 +157,7 @@ class VoiceListener(discord.sinks.Sink):
         pcm = data.data
 
         try:
-            rms = audioop.rms(pcm, _SAMPLE_WIDTH)
+            rms = _pcm_rms(pcm)
         except Exception:
             return
 
