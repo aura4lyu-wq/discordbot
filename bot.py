@@ -341,6 +341,15 @@ async def join(ctx: discord.ApplicationContext):
         else:
             raise
 
+    # 接続が完全に確立されるまで待機（最大 5 秒）
+    for _ in range(10):
+        if vc.is_connected():
+            break
+        await asyncio.sleep(0.5)
+    else:
+        await ctx.respond("ボイスチャンネルへの接続に失敗しました。再度お試しください。", ephemeral=True)
+        return
+
     # 音声受信開始
     listener = VoiceListener(vc, ctx.channel)
     _listeners[gid] = listener
