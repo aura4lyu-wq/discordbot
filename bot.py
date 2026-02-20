@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 from google import genai
 from dotenv import load_dotenv
 import aiohttp
@@ -253,9 +252,7 @@ class VoiceListener(discord.sinks.Sink):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
     print(f"We have logged in as {bot.user}")
-    print("スラッシュコマンドを同期しました")
 
 
 @bot.event
@@ -309,33 +306,33 @@ async def on_message(message: discord.Message):
 # スラッシュコマンド
 # ------------------------------------------------------------------ #
 
-@bot.tree.command(name="join", description="ボットをあなたのボイスチャンネルに参加させます")
-async def join(interaction: discord.Interaction):
-    if interaction.user.voice is None:
-        await interaction.response.send_message(
+@bot.slash_command(name="join", description="ボットをあなたのボイスチャンネルに参加させます")
+async def join(ctx: discord.ApplicationContext):
+    if ctx.author.voice is None:
+        await ctx.respond(
             "先にボイスチャンネルに参加してからコマンドを実行してください。",
             ephemeral=True,
         )
         return
 
-    channel = interaction.user.voice.channel
-    gid = interaction.guild.id
+    channel = ctx.author.voice.channel
+    gid = ctx.guild.id
 
     try:
-        if interaction.guild.voice_client is not None:
+        if ctx.guild.voice_client is not None:
             # 既に参加中 → 録音を一旦停止してから移動
             if gid in _listeners:
-                interaction.guild.voice_client.stop_recording()
+                ctx.guild.voice_client.stop_recording()
                 del _listeners[gid]
-            await interaction.guild.voice_client.move_to(channel)
-            vc = interaction.guild.voice_client
+            await ctx.guild.voice_client.move_to(channel)
+            vc = ctx.guild.voice_client
             msg = f"**{channel.name}** に移動しました。"
         else:
             vc = await channel.connect()
             msg = f"**{channel.name}** に参加しました。"
     except RuntimeError as e:
         if "PyNaCl" in str(e):
-            await interaction.response.send_message(
+            await ctx.respond(
                 "音声機能に必要な PyNaCl ライブラリがインストールされていません。\n"
                 "`pip install PyNaCl` を実行して再起動してください。",
                 ephemeral=True,
@@ -345,82 +342,82 @@ async def join(interaction: discord.Interaction):
             raise
 
     # 音声受信開始
-    listener = VoiceListener(vc, interaction.channel)
+    listener = VoiceListener(vc, ctx.channel)
     _listeners[gid] = listener
     vc.start_recording(listener, lambda sink, *_: None)
 
-    await interaction.response.send_message(msg + " 音声認識を開始します。")
+    await ctx.respond(msg + " 音声認識を開始します。")
 
 
-@bot.tree.command(name="leave", description="ボットをボイスチャンネルから退出させます")
-async def leave(interaction: discord.Interaction):
-    if interaction.guild.voice_client is None:
-        await interaction.response.send_message(
+@bot.slash_command(name="leave", description="ボットをボイスチャンネルから退出させます")
+async def leave(ctx: discord.ApplicationContext):
+    if ctx.guild.voice_client is None:
+        await ctx.respond(
             "ボットはボイスチャンネルに参加していません。",
             ephemeral=True,
         )
         return
 
-    gid = interaction.guild.id
-    channel_name = interaction.guild.voice_client.channel.name
+    gid = ctx.guild.id
+    channel_name = ctx.guild.voice_client.channel.name
 
     if gid in _listeners:
-        interaction.guild.voice_client.stop_recording()
+        ctx.guild.voice_client.stop_recording()
         del _listeners[gid]
 
-    await interaction.guild.voice_client.disconnect()
-    await interaction.response.send_message(f"**{channel_name}** から退出しました。")
+    await ctx.guild.voice_client.disconnect()
+    await ctx.respond(f"**{channel_name}** から退出しました。")
 
 
-@bot.tree.command(name="speak", description="テキストをボイスチャンネルで読み上げます")
-@app_commands.describe(text="読み上げるテキスト")
-async def speak(interaction: discord.Interaction, text: str):
-    vc: discord.VoiceClient | None = interaction.guild.voice_client
+@bot.slash_command(name="speak", description="テキストをボイスチャンネルで読み上げます")
+@discord.option("text", description="読み上げるテキスト")
+async def speak(ctx: discord.ApplicationContext, text: str):
+    vc: discord.VoiceClient | None = ctx.guild.voice_client
 
     if vc is None:
-        await interaction.response.send_message(
+        await ctx.respond(
             "先に `/join` でボットをボイスチャンネルに参加させてください。",
             ephemeral=True,
         )
         return
 
     if vc.is_playing():
-        await interaction.response.send_message(
+        await ctx.respond(
             "現在再生中です。終わるまでお待ちください。",
             ephemeral=True,
         )
         return
 
     # 合成に時間がかかるので defer してから応答
-    await interaction.response.defer()
+    await ctx.defer()
 
     try:
         await play_tts(vc, text)
-        await interaction.followup.send(f"読み上げました: 「{text}」")
+        await ctx.followup.send(f"読み上げました: 「{text}」")
     except aiohttp.ClientConnectorError:
-        await interaction.followup.send(
+        await ctx.followup.send(
             "VOICEVOX エンジンに接続できませんでした。\n"
             "VOICEVOX を起動してから再試行してください。"
         )
     except Exception as e:
-        await interaction.followup.send(f"エラーが発生しました: {e}")
+        await ctx.followup.send(f"エラーが発生しました: {e}")
 
 
-@bot.tree.command(name="autoread", description="Gemini の返答を VC で自動読み上げする機能をオン/オフします")
-async def autoread(interaction: discord.Interaction):
-    gid = interaction.guild.id
+@bot.slash_command(name="autoread", description="Gemini の返答を VC で自動読み上げする機能をオン/オフします")
+async def autoread(ctx: discord.ApplicationContext):
+    gid = ctx.guild.id
     if gid in auto_read_guilds:
         auto_read_guilds.discard(gid)
-        await interaction.response.send_message("自動読み上げを **オフ** にしました。")
+        await ctx.respond("自動読み上げを **オフ** にしました。")
     else:
         auto_read_guilds.add(gid)
-        await interaction.response.send_message("自動読み上げを **オン** にしました。")
+        await ctx.respond("自動読み上げを **オン** にしました。")
 
 
-@bot.tree.command(name="forget", description="このチャンネルの会話履歴をリセットします")
-async def forget(interaction: discord.Interaction):
-    chat_histories.pop(interaction.channel.id, None)
-    await interaction.response.send_message("会話履歴をリセットしました。")
+@bot.slash_command(name="forget", description="このチャンネルの会話履歴をリセットします")
+async def forget(ctx: discord.ApplicationContext):
+    chat_histories.pop(ctx.channel.id, None)
+    await ctx.respond("会話履歴をリセットしました。")
 
 
 bot.run(TOKEN)
