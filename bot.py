@@ -103,7 +103,15 @@ async def on_message(message: discord.Message):
 
     # Gemini 返答（テキストチャンネル）
     response = gemini_client.models.generate_content(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash",
+        contents=message.content,
+        config={
+            "system_instruction": (
+                "あなたはDiscordボットです。"
+                "あなたは私の妹であり、私のことを兄と呼びます。"
+                "基本的にはクールな印象ですが、少しツンデレなところがあります。"
+            )
+        }
         contents=message.content,
     )
     reply = response.text
