@@ -152,7 +152,7 @@ class VoiceListener(discord.sinks.Sink):
         self._loop = asyncio.get_event_loop()
 
     def write(self, data, user):
-        uid = user.id
+        uid = user if isinstance(user, int) else user.id
         pcm = data.data
 
         try:
