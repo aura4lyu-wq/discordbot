@@ -24,6 +24,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://localhost:50021")
 VOICEVOX_SPEAKER = int(os.getenv("VOICEVOX_SPEAKER", "1"))
+VOICEVOX_SPEED = float(os.getenv("VOICEVOX_SPEED", "1.3"))
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 
 # Botクライアント作成（スラッシュコマンド対応）
@@ -51,6 +52,8 @@ async def voicevox_tts(text: str, speaker: int = VOICEVOX_SPEAKER) -> bytes:
         ) as resp:
             resp.raise_for_status()
             query = await resp.json()
+
+        query["speedScale"] = VOICEVOX_SPEED
 
         # 2. 音声合成
         async with session.post(
@@ -107,7 +110,7 @@ async def on_message(message: discord.Message):
 
     # Gemini 返答（テキストチャンネル）
     response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-flash-lite",
         contents=message.content,
         config={
             "system_instruction": (
