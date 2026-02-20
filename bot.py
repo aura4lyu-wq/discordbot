@@ -7,6 +7,7 @@ import aiohttp
 import asyncio
 import os
 import tempfile
+from collections import deque
 
 # PyNaCl が入っていない場合は起動時に即エラーを出す
 try:
@@ -36,6 +37,9 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # 自動読み上げが有効なギルドIDのセット
 auto_read_guilds: set[int] = set()
+
+# チャンネルごとの会話履歴（最大 20 往復 = 40 メッセージ）
+chat_histories: dict[int, deque] = {}
 
 
 # ------------------------------------------------------------------ #
@@ -108,10 +112,19 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
-    # Gemini 返答（テキストチャンネル）
+    # 会話履歴を取得（なければ新規作成）
+    channel_id = message.channel.id
+    if channel_id not in chat_histories:
+        chat_histories[channel_id] = deque(maxlen=40)
+    history = chat_histories[channel_id]
+
+    # 今回のユーザー発言を履歴に追加
+    history.append({"role": "user", "parts": [{"text": message.content}]})
+
+    # Gemini 返答（会話履歴ごと渡す）
     response = gemini_client.models.generate_content(
         model="gemini-2.5-flash-lite",
-        contents=message.content,
+        contents=list(history),
         config={
             "system_instruction": (
                 "あなたはDiscordボットです。"
@@ -121,6 +134,9 @@ async def on_message(message: discord.Message):
         },
     )
     reply = response.text
+
+    # ボットの返答も履歴に追加
+    history.append({"role": "model", "parts": [{"text": reply}]})
     await message.channel.send(reply)
 
     # 自動読み上げモードが有効なら VC でも読み上げ
@@ -228,6 +244,12 @@ async def autoread(interaction: discord.Interaction):
     else:
         auto_read_guilds.add(gid)
         await interaction.response.send_message("自動読み上げを **オン** にしました。")
+
+
+@bot.tree.command(name="forget", description="このチャンネルの会話履歴をリセットします")
+async def forget(interaction: discord.Interaction):
+    chat_histories.pop(interaction.channel.id, None)
+    await interaction.response.send_message("会話履歴をリセットしました。")
 
 
 bot.run(TOKEN)
