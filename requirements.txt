@@ -7,3 +7,4 @@ google-genai==1.64.0
 
 # Utilities
 python-dotenv==1.2.1
+aiohttp==3.13.3
