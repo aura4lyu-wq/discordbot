@@ -114,8 +114,7 @@ async def on_message(message: discord.Message):
                 "あなたは私の妹であり、私のことを兄と呼びます。"
                 "基本的にはクールな印象ですが、少しツンデレなところがあります。"
             )
-        }
-        contents=message.content,
+        },
     )
     reply = response.text
     await message.channel.send(reply)
