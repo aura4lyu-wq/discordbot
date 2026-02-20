@@ -3,10 +3,13 @@ from discord.ext import commands
 from discord import app_commands
 from google import genai
 from dotenv import load_dotenv
+import audioop
 import aiohttp
 import asyncio
+import io
 import os
 import tempfile
+import wave
 from collections import deque
 
 # PyNaCl が入っていない場合は起動時に即エラーを出す
@@ -26,7 +29,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://localhost:50021")
 VOICEVOX_SPEAKER = int(os.getenv("VOICEVOX_SPEAKER", "1"))
 VOICEVOX_SPEED = float(os.getenv("VOICEVOX_SPEED", "1.3"))
-FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
+FFMPEG_PATH        = os.getenv("FFMPEG_PATH", "ffmpeg")
+WHISPER_MODEL      = os.getenv("WHISPER_MODEL", "small")
+SILENCE_THRESHOLD  = int(os.getenv("SILENCE_THRESHOLD", "300"))   # PCM RMS 閾値
+SILENCE_DURATION   = float(os.getenv("SILENCE_DURATION",  "1.0")) # 無音と判断する秒数
 
 # Botクライアント作成（スラッシュコマンド対応）
 intents = discord.Intents.all()
@@ -40,6 +46,21 @@ auto_read_guilds: set[int] = set()
 
 # チャンネルごとの会話履歴（最大 20 往復 = 40 メッセージ）
 chat_histories: dict[int, deque] = {}
+
+# ギルドごとの VoiceListener（音声受信中の管理用）
+_listeners: dict[int, "VoiceListener"] = {}
+
+# Whisper モデル（初回使用時にロード）
+_whisper_model = None
+
+def _get_whisper():
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        print(f"[Whisper] モデル '{WHISPER_MODEL}' をロード中...")
+        _whisper_model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+        print("[Whisper] ロード完了")
+    return _whisper_model
 
 
 # ------------------------------------------------------------------ #
@@ -94,6 +115,126 @@ async def play_tts(voice_client: discord.VoiceClient, text: str) -> None:
         after=after_play,
     )
     await done  # 再生完了まで待つ
+
+
+# ------------------------------------------------------------------ #
+# 音声受信 → 文字起こし → Gemini → TTS
+# ------------------------------------------------------------------ #
+
+# Discord の音声フォーマット定数
+_FRAME_RATE   = 48000
+_CHANNELS     = 2
+_SAMPLE_WIDTH = 2        # 16-bit PCM
+_FRAME_MS     = 20       # Discord は 20ms フレーム
+_SILENCE_FRAMES = int(SILENCE_DURATION * 1000 / _FRAME_MS)
+_MIN_AUDIO_LEN  = int(_FRAME_RATE * _CHANNELS * _SAMPLE_WIDTH * 0.5)  # 0.5 秒以上
+
+
+class VoiceListener(discord.sinks.Sink):
+    """VC の発話を受信し、無音検出で区切って Gemini へ送るシンク"""
+
+    def __init__(self, vc: discord.VoiceClient, text_channel):
+        super().__init__()
+        self.vc           = vc
+        self.text_channel = text_channel
+        self._buffers:    dict[int, bytearray] = {}
+        self._silence:    dict[int, int]       = {}
+        self._processing: set[int]             = set()
+        self._loop = asyncio.get_event_loop()
+
+    def write(self, data, user):
+        uid = user.id
+        pcm = data.data
+
+        try:
+            rms = audioop.rms(pcm, _SAMPLE_WIDTH)
+        except Exception:
+            return
+
+        if uid not in self._buffers:
+            self._buffers[uid] = bytearray()
+            self._silence[uid] = 0
+
+        if rms > SILENCE_THRESHOLD:
+            # 発話中: バッファに追加・無音カウントリセット
+            self._buffers[uid] += pcm
+            self._silence[uid] = 0
+        elif self._buffers[uid]:
+            # 無音が続いている
+            self._silence[uid] += 1
+            if self._silence[uid] >= _SILENCE_FRAMES and uid not in self._processing:
+                # 発話終了と判断 → 非同期処理へ渡す
+                audio = bytes(self._buffers[uid])
+                self._buffers[uid] = bytearray()
+                self._silence[uid] = 0
+                asyncio.run_coroutine_threadsafe(
+                    self._process(user, audio), self._loop
+                )
+
+    async def _process(self, user, pcm: bytes):
+        if len(pcm) < _MIN_AUDIO_LEN:
+            return  # 短すぎる（ノイズ等）
+
+        self._processing.add(user.id)
+        try:
+            # PCM → WAV
+            wav_buf = io.BytesIO()
+            with wave.open(wav_buf, "wb") as wf:
+                wf.setnchannels(_CHANNELS)
+                wf.setsampwidth(_SAMPLE_WIDTH)
+                wf.setframerate(_FRAME_RATE)
+                wf.writeframes(pcm)
+
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(wav_buf.getvalue())
+                tmp = f.name
+
+            try:
+                segments, _ = _get_whisper().transcribe(tmp, language="ja")
+                text = "".join(s.text for s in segments).strip()
+            finally:
+                os.unlink(tmp)
+
+            if not text:
+                return
+
+            print(f"[STT] {user.display_name}: {text}")
+
+            # Gemini に送信（テキストチャンネルの会話履歴を共有）
+            cid = self.text_channel.id
+            if cid not in chat_histories:
+                chat_histories[cid] = deque(maxlen=40)
+            history = chat_histories[cid]
+            history.append({"role": "user", "parts": [{"text": text}]})
+
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=list(history),
+                config={
+                    "system_instruction": (
+                        "あなたはDiscordボットです。"
+                        "あなたは私の妹であり、私のことを兄と呼びます。"
+                        "基本的にはクールな印象ですが、少しツンデレなところがあります。"
+                    )
+                },
+            )
+            reply = response.text
+            history.append({"role": "model", "parts": [{"text": reply}]})
+
+            # テキストチャンネルに発言+返答を表示
+            await self.text_channel.send(f"**{user.display_name}**: {text}\n{reply}")
+
+            # VC で TTS 再生（再生中でなければ）
+            if self.vc.is_connected() and not self.vc.is_playing():
+                await play_tts(self.vc, reply)
+
+        except Exception as e:
+            print(f"[VoiceListener] エラー: {e}")
+        finally:
+            self._processing.discard(user.id)
+
+    def cleanup(self):
+        pass
 
 
 # ------------------------------------------------------------------ #
@@ -168,14 +309,20 @@ async def join(interaction: discord.Interaction):
         return
 
     channel = interaction.user.voice.channel
+    gid = interaction.guild.id
 
     try:
         if interaction.guild.voice_client is not None:
+            # 既に参加中 → 録音を一旦停止してから移動
+            if gid in _listeners:
+                interaction.guild.voice_client.stop_recording()
+                del _listeners[gid]
             await interaction.guild.voice_client.move_to(channel)
-            await interaction.response.send_message(f"**{channel.name}** に移動しました。")
+            vc = interaction.guild.voice_client
+            msg = f"**{channel.name}** に移動しました。"
         else:
-            await channel.connect()
-            await interaction.response.send_message(f"**{channel.name}** に参加しました。")
+            vc = await channel.connect()
+            msg = f"**{channel.name}** に参加しました。"
     except RuntimeError as e:
         if "PyNaCl" in str(e):
             await interaction.response.send_message(
@@ -183,8 +330,16 @@ async def join(interaction: discord.Interaction):
                 "`pip install PyNaCl` を実行して再起動してください。",
                 ephemeral=True,
             )
+            return
         else:
             raise
+
+    # 音声受信開始
+    listener = VoiceListener(vc, interaction.channel)
+    _listeners[gid] = listener
+    vc.start_recording(listener, lambda sink, *_: None)
+
+    await interaction.response.send_message(msg + " 音声認識を開始します。")
 
 
 @bot.tree.command(name="leave", description="ボットをボイスチャンネルから退出させます")
@@ -196,7 +351,13 @@ async def leave(interaction: discord.Interaction):
         )
         return
 
+    gid = interaction.guild.id
     channel_name = interaction.guild.voice_client.channel.name
+
+    if gid in _listeners:
+        interaction.guild.voice_client.stop_recording()
+        del _listeners[gid]
+
     await interaction.guild.voice_client.disconnect()
     await interaction.response.send_message(f"**{channel_name}** から退出しました。")
 
