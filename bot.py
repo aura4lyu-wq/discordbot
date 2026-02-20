@@ -24,6 +24,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 VOICEVOX_URL = os.getenv("VOICEVOX_URL", "http://localhost:50021")
 VOICEVOX_SPEAKER = int(os.getenv("VOICEVOX_SPEAKER", "1"))
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 
 # Botクライアント作成（スラッシュコマンド対応）
 intents = discord.Intents.all()
@@ -82,7 +83,7 @@ async def play_tts(voice_client: discord.VoiceClient, text: str) -> None:
         )
 
     voice_client.play(
-        discord.FFmpegPCMAudio(tmp_path, executable="/usr/bin/ffmpeg"),
+        discord.FFmpegPCMAudio(tmp_path, executable=FFMPEG_PATH),
         after=after_play,
     )
     await done  # 再生完了まで待つ
