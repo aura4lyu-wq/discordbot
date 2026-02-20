@@ -153,7 +153,7 @@ class VoiceListener(discord.sinks.Sink):
 
     def write(self, data, user):
         uid = user if isinstance(user, int) else user.id
-        pcm = data.data
+        pcm = data if isinstance(data, (bytes, bytearray)) else data.data
 
         try:
             rms = _pcm_rms(pcm)
