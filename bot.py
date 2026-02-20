@@ -315,6 +315,9 @@ async def join(ctx: discord.ApplicationContext):
         )
         return
 
+    # VC 接続に時間がかかる場合があるため、先に defer して 15 分の応答猶予を確保する
+    await ctx.defer()
+
     channel = ctx.author.voice.channel
     gid = ctx.guild.id
 
@@ -332,30 +335,20 @@ async def join(ctx: discord.ApplicationContext):
             msg = f"**{channel.name}** に参加しました。"
     except RuntimeError as e:
         if "PyNaCl" in str(e):
-            await ctx.respond(
+            await ctx.followup.send(
                 "音声機能に必要な PyNaCl ライブラリがインストールされていません。\n"
                 "`pip install PyNaCl` を実行して再起動してください。",
-                ephemeral=True,
             )
             return
         else:
             raise
-
-    # 接続が完全に確立されるまで待機（最大 5 秒）
-    for _ in range(10):
-        if vc.is_connected():
-            break
-        await asyncio.sleep(0.5)
-    else:
-        await ctx.respond("ボイスチャンネルへの接続に失敗しました。再度お試しください。", ephemeral=True)
-        return
 
     # 音声受信開始
     listener = VoiceListener(vc, ctx.channel)
     _listeners[gid] = listener
     vc.start_recording(listener, lambda sink, *_: None)
 
-    await ctx.respond(msg + " 音声認識を開始します。")
+    await ctx.followup.send(msg + " 音声認識を開始します。")
 
 
 @bot.slash_command(name="leave", description="ボットをボイスチャンネルから退出させます")
